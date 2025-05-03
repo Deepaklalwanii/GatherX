@@ -15,7 +15,7 @@ const WelcomeBanner = () => {
       } else {
         clearInterval(interval)
       }
-    }, 200)
+    }, 160)
 
     return () => clearInterval(interval)
   }, [])
@@ -24,11 +24,11 @@ const WelcomeBanner = () => {
     <section>
       <div className='gx-welcome-banner'>
         <h1 className='gx-welcome-banner-title'>
-          <span>Welcome to </span>
+          <span className='float'>Welcome to </span>
           <span className='typewriter'>{text}</span>
         </h1>
         <p>We are glad to have you here. Explore our features and enjoy your stay!</p>
-        <button>Get Started</button>
+        <button className='gx-bannerButton'>Join now</button>
       </div>
     </section>
   )
