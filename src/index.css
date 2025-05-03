@@ -4,6 +4,11 @@
     box-sizing: border-box;
 }
 
+.gx-welcomeWrapper{
+  padding: 0 20px;
+  background: #f0f0f0;
+}
+
 .gx-welcome-banner{
     display: flex;
     font-family: 'Montserrat';

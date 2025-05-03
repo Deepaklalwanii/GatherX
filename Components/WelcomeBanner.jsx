@@ -21,7 +21,7 @@ const WelcomeBanner = () => {
   }, [])
 
   return (
-    <section>
+    <section className='gx-welcomeWrapper'>
       <div className='gx-welcome-banner'>
         <h1 className='gx-welcome-banner-title'>
           <span className='float'>Welcome to </span>
