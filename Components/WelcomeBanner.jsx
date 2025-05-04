@@ -27,7 +27,7 @@ const WelcomeBanner = () => {
           <span className='float'>Welcome to </span>
           <span className='typewriter'>{text}</span>
         </h1>
-        <p>We are glad to have you here. Explore our features and enjoy your stay!</p>
+        <p className='gx-welcome-p-tag'>We are glad to have you here. Explore our features and enjoy your stay!</p>
         <button className='gx-bannerButton'>Join now</button>
       </div>
     </section>
