@@ -1,20 +1,18 @@
-// WebRTCComponent.jsx
 import React, { useState, useEffect, useRef } from 'react';
-import {
-  collection,
-  doc,
-  setDoc,
-  addDoc,
-  onSnapshot,
-  getDoc
-} from 'firebase/firestore';
-import { db } from './firebase'; // your path may differ
+import { doc, getDoc, updateDoc, collection, getDocs, addDoc, onSnapshot } from 'firebase/firestore';
+import { db } from './firebase';
 
 const configuration = {
   iceServers: [
-    { urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
-  ],
-  iceCandidatePoolSize: 10,
+    {
+      urls: 'stun:stun.l.google.com:19302'
+    },
+    {
+      urls: 'turn:your.turn.server:3478',
+      username: 'user',
+      credential: 'pass'
+    }
+  ]
 };
 
 const WebRTCComponent = () => {
@@ -51,57 +49,55 @@ const WebRTCComponent = () => {
   };
 
   const createRoom = async () => {
-  const peerConnection = new RTCPeerConnection(configuration);
-  peerConnectionRef.current = peerConnection;
+    const peerConnection = new RTCPeerConnection(configuration);
+    peerConnectionRef.current = peerConnection;
 
-  registerPeerConnectionListeners();
+    registerPeerConnectionListeners();
 
-  localStreamRef.current.getTracks().forEach(track => {
-    peerConnection.addTrack(track, localStreamRef.current);
-  });
-
-  remoteStreamRef.current = new MediaStream();
-  peerConnection.addEventListener('track', event => {
-    event.streams[0].getTracks().forEach(track => {
-      remoteStreamRef.current.addTrack(track);
+    localStreamRef.current.getTracks().forEach(track => {
+      peerConnection.addTrack(track, localStreamRef.current);
     });
-  });
 
-  const offer = await peerConnection.createOffer();
-  await peerConnection.setLocalDescription(offer);
+    remoteStreamRef.current = new MediaStream();
+    peerConnection.addEventListener('track', event => {
+      event.streams[0].getTracks().forEach(track => {
+        remoteStreamRef.current.addTrack(track);
+      });
+    });
 
-  const roomData = {
-    offer: {
-      type: offer.type,
-      sdp: offer.sdp,
-    },
-  };
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
 
-  // ✅ Create a new room document in Firestore
-  const roomRef = await addDoc(collection(db, 'rooms'), roomData);
-  setRoomId(roomRef.id);
+    const roomData = {
+      offer: {
+        type: offer.type,
+        sdp: offer.sdp,
+      },
+    };
 
-  // ✅ Create subcollection for ICE candidates
-  const callerCandidatesCollection = collection(roomRef, 'callerCandidates');
+    const roomRef = await addDoc(collection(db, 'rooms'), roomData);
+    setRoomId(roomRef.id);
 
-  peerConnection.addEventListener('icecandidate', event => {
-    if (event.candidate) {
-      addDoc(callerCandidatesCollection, event.candidate.toJSON());
-    }
-  });
+    const callerCandidatesCollection = collection(roomRef, 'callerCandidates');
 
-  const calleeCandidatesCollection = collection(roomRef, 'calleeCandidates');
-  onSnapshot(calleeCandidatesCollection, snapshot => {
-    snapshot.docChanges().forEach(change => {
-      if (change.type === 'added') {
-        const data = change.doc.data();
-        peerConnection.addIceCandidate(new RTCIceCandidate(data));
+    peerConnection.addEventListener('icecandidate', event => {
+      if (event.candidate) {
+        addDoc(callerCandidatesCollection, event.candidate.toJSON());
       }
     });
-  });
 
-  setIsInCall(true);
-};
+    const calleeCandidatesCollection = collection(roomRef, 'calleeCandidates');
+    onSnapshot(calleeCandidatesCollection, snapshot => {
+      snapshot.docChanges().forEach(change => {
+        if (change.type === 'added') {
+          const data = change.doc.data();
+          peerConnection.addIceCandidate(new RTCIceCandidate(data));
+        }
+      });
+    });
+
+    setIsInCall(true);
+  };
 
   const joinRoom = () => {
     setRoomDialogOpen(true);
@@ -109,10 +105,10 @@ const WebRTCComponent = () => {
 
   const confirmJoinRoom = async () => {
     try {
-      const roomRef = db.collection('rooms').doc(roomId);
-      const roomSnapshot = await roomRef.get();
+      const roomRef = doc(db, 'rooms', roomId);
+      const roomSnapshot = await getDoc(roomRef);
 
-      if (!roomSnapshot.exists) {
+      if (!roomSnapshot.exists()) {
         alert('Room not found!');
         return;
       }
@@ -138,14 +134,14 @@ const WebRTCComponent = () => {
       const answer = await peerConnectionRef.current.createAnswer();
       await peerConnectionRef.current.setLocalDescription(answer);
 
-      await roomRef.update({
+      await updateDoc(roomRef, {
         answer: {
           type: answer.type,
           sdp: answer.sdp,
         },
       });
 
-      roomRef.collection('callerCandidates').onSnapshot(snapshot => {
+      onSnapshot(collection(roomRef, 'callerCandidates'), snapshot => {
         snapshot.docChanges().forEach(change => {
           if (change.type === 'added') {
             const data = change.doc.data();
@@ -154,14 +150,15 @@ const WebRTCComponent = () => {
         });
       });
 
-      const calleeCandidatesCollection = roomRef.collection('calleeCandidates');
+      const calleeCandidatesCollection = collection(roomRef, 'calleeCandidates');
       peerConnectionRef.current.addEventListener('icecandidate', event => {
         if (event.candidate) {
-          calleeCandidatesCollection.add(event.candidate.toJSON());
+          addDoc(calleeCandidatesCollection, event.candidate.toJSON());
         }
       });
 
       setIsInCall(true);
+      setRoomDialogOpen(false); // Close dialog after join
     } catch (error) {
       console.error('Error joining room:', error);
     }
@@ -180,12 +177,12 @@ const WebRTCComponent = () => {
       }
 
       if (roomId) {
-        const roomRef = db.collection('rooms').doc(roomId);
+        const roomRef = doc(db, 'rooms', roomId);
 
-        const calleeCandidates = await roomRef.collection('calleeCandidates').get();
+        const calleeCandidates = await getDocs(collection(roomRef, 'calleeCandidates'));
         calleeCandidates.forEach(async candidate => await candidate.ref.delete());
 
-        const callerCandidates = await roomRef.collection('callerCandidates').get();
+        const callerCandidates = await getDocs(collection(roomRef, 'callerCandidates'));
         callerCandidates.forEach(async candidate => await candidate.ref.delete());
 
         await roomRef.delete();
@@ -233,6 +230,12 @@ const WebRTCComponent = () => {
         <button onClick={hangUp} disabled={!isInCall}>Hang Up</button>
       </div>
 
+      {/* Show Room ID in <p> tag if available */}
+      {roomId && !roomDialogOpen && (
+        <p><strong>Room ID:</strong> {roomId}</p>
+      )}
+
+      {/* Dialog for entering Room ID */}
       {roomDialogOpen && (
         <div className="room-dialog">
           <input
