@@ -4,15 +4,9 @@ import { db } from './firebase';
 
 // ✅ Free TURN server (for testing only — replace in production)
 const configuration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    {
-      urls: 'turn:global.relay.metered.ca:80',
-      username: 'openai',
-      credential: 'webrtc'
-    }
-  ]
+  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 };
+
 
 const WebRTCComponent = () => {
   const [roomId, setRoomId] = useState('');
