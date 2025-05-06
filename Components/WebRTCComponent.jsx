@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { doc, getDoc, updateDoc, collection, getDocs, addDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, getDocs, addDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { db } from './firebase';
 
 const configuration = {
@@ -185,7 +185,7 @@ const WebRTCComponent = () => {
         const callerCandidates = await getDocs(collection(roomRef, 'callerCandidates'));
         callerCandidates.forEach(async candidate => await candidate.ref.delete());
 
-        await roomRef.delete();
+        await deleteDoc(roomRef);
       }
 
       setRoomId('');
