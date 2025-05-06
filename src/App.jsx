@@ -9,7 +9,7 @@ import firebase from 'firebase/compat/app'
 export default function App() {
   return (
     <>
-      <WebRTCComponent />
+      <WelcomeBanner />
     </>
   )
 }
