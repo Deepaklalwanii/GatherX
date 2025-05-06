@@ -2,15 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { doc, getDoc, updateDoc, collection, getDocs, addDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { db } from './firebase';
 
+// ✅ Free TURN server (for testing only — replace in production)
 const configuration = {
   iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
     {
-      urls: 'stun:stun.l.google.com:19302'
-    },
-    {
-      urls: 'turn:your.turn.server:3478',
-      username: 'user',
-      credential: 'pass'
+      urls: 'turn:global.relay.metered.ca:80',
+      username: 'openai',
+      credential: 'webrtc'
     }
   ]
 };
@@ -32,9 +31,6 @@ const WebRTCComponent = () => {
     if (localVideoRef.current && localStreamRef.current) {
       localVideoRef.current.srcObject = localStreamRef.current;
     }
-    if (remoteVideoRef.current && remoteStreamRef.current) {
-      remoteVideoRef.current.srcObject = remoteStreamRef.current;
-    }
   }, [isMediaReady]);
 
   const openUserMedia = async () => {
@@ -42,6 +38,9 @@ const WebRTCComponent = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       localStreamRef.current = stream;
       remoteStreamRef.current = new MediaStream();
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
       setIsMediaReady(true);
     } catch (error) {
       console.error('Error accessing media devices:', error);
@@ -63,6 +62,9 @@ const WebRTCComponent = () => {
       event.streams[0].getTracks().forEach(track => {
         remoteStreamRef.current.addTrack(track);
       });
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+      }
     });
 
     const offer = await peerConnection.createOffer();
@@ -113,26 +115,31 @@ const WebRTCComponent = () => {
         return;
       }
 
-      peerConnectionRef.current = new RTCPeerConnection(configuration);
+      const peerConnection = new RTCPeerConnection(configuration);
+      peerConnectionRef.current = peerConnection;
+
       registerPeerConnectionListeners();
 
       localStreamRef.current.getTracks().forEach(track => {
-        peerConnectionRef.current.addTrack(track, localStreamRef.current);
+        peerConnection.addTrack(track, localStreamRef.current);
       });
 
       remoteStreamRef.current = new MediaStream();
-      peerConnectionRef.current.addEventListener('track', event => {
+      peerConnection.addEventListener('track', event => {
         event.streams[0].getTracks().forEach(track => {
           remoteStreamRef.current.addTrack(track);
         });
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = remoteStreamRef.current;
+        }
       });
 
       const roomData = roomSnapshot.data();
       const offer = roomData.offer;
-      await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
 
-      const answer = await peerConnectionRef.current.createAnswer();
-      await peerConnectionRef.current.setLocalDescription(answer);
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
 
       await updateDoc(roomRef, {
         answer: {
@@ -145,20 +152,20 @@ const WebRTCComponent = () => {
         snapshot.docChanges().forEach(change => {
           if (change.type === 'added') {
             const data = change.doc.data();
-            peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data));
+            peerConnection.addIceCandidate(new RTCIceCandidate(data));
           }
         });
       });
 
       const calleeCandidatesCollection = collection(roomRef, 'calleeCandidates');
-      peerConnectionRef.current.addEventListener('icecandidate', event => {
+      peerConnection.addEventListener('icecandidate', event => {
         if (event.candidate) {
           addDoc(calleeCandidatesCollection, event.candidate.toJSON());
         }
       });
 
       setIsInCall(true);
-      setRoomDialogOpen(false); // Close dialog after join
+      setRoomDialogOpen(false);
     } catch (error) {
       console.error('Error joining room:', error);
     }
@@ -180,10 +187,10 @@ const WebRTCComponent = () => {
         const roomRef = doc(db, 'rooms', roomId);
 
         const calleeCandidates = await getDocs(collection(roomRef, 'calleeCandidates'));
-        calleeCandidates.forEach(async candidate => await candidate.ref.delete());
+        calleeCandidates.forEach(async candidate => await deleteDoc(candidate.ref));
 
         const callerCandidates = await getDocs(collection(roomRef, 'callerCandidates'));
-        callerCandidates.forEach(async candidate => await candidate.ref.delete());
+        callerCandidates.forEach(async candidate => await deleteDoc(candidate.ref));
 
         await deleteDoc(roomRef);
       }
@@ -220,8 +227,8 @@ const WebRTCComponent = () => {
 
   return (
     <div>
-      <video ref={localVideoRef} autoPlay muted playsInline></video>
-      <video ref={remoteVideoRef} autoPlay playsInline></video>
+      <video ref={localVideoRef} autoPlay muted playsInline style={{ width: '300px' }}></video>
+      <video ref={remoteVideoRef} autoPlay playsInline style={{ width: '300px' }}></video>
 
       <div>
         <button onClick={openUserMedia}>Open Camera</button>
@@ -230,12 +237,10 @@ const WebRTCComponent = () => {
         <button onClick={hangUp} disabled={!isInCall}>Hang Up</button>
       </div>
 
-      {/* Show Room ID in <p> tag if available */}
       {roomId && !roomDialogOpen && (
         <p><strong>Room ID:</strong> {roomId}</p>
       )}
 
-      {/* Dialog for entering Room ID */}
       {roomDialogOpen && (
         <div className="room-dialog">
           <input
