@@ -1,9 +1,20 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { db, auth } from './firebase';
-import { collection, addDoc, getDocs, doc, getDoc } from 'firebase/firestore';
+import {
+  collection,
+  addDoc,
+  getDocs,
+  doc,
+  getDoc,
+  updateDoc,
+} from 'firebase/firestore';
 import VideoPanel from './VideoPanel';
 import RoomDialog from './RoomDialog';
 import ButtonPanel from './ButtonPanel';
+
+const configuration = {
+  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+};
 
 function WebRTCComponent() {
   const [localStream, setLocalStream] = useState(null);
@@ -12,49 +23,19 @@ function WebRTCComponent() {
   const [currentRoom, setCurrentRoom] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-
-  const localStreamRef = useRef(null); // ✅ Fix for reliable stream tracking
+  const peerConnectionRef = useRef(null);
 
   useEffect(() => {
     const fetchRooms = async () => {
       try {
-        const roomCollection = collection(db, 'rooms');
-        const roomSnapshot = await getDocs(roomCollection);
-        const roomList = roomSnapshot.docs.map(doc => doc.data());
-        setRooms(roomList);
+        const roomSnapshot = await getDocs(collection(db, 'rooms'));
+        setRooms(roomSnapshot.docs.map(doc => doc.data()));
       } catch (error) {
-        console.error('Error fetching rooms: ', error);
+        console.error('Error fetching rooms:', error);
         setError('Error fetching rooms. Please try again later.');
       }
     };
-
     fetchRooms();
-
-    const cameraBtn = document.querySelector('#cameraBtn');
-    const createBtn = document.querySelector('#createBtn');
-    const joinBtn = document.querySelector('#joinBtn');
-    const hangupBtn = document.querySelector('#hangupBtn');
-    const confirmJoinBtn = document.querySelector('#confirmJoinBtn');
-    
-    const roomDialog = new window.mdc.dialog.MDCDialog(document.querySelector('#room-dialog'));
-
-    cameraBtn?.addEventListener('click', openUserMedia);
-    hangupBtn?.addEventListener('click', hangUp);
-    createBtn?.addEventListener('click', createRoom);
-    joinBtn?.addEventListener('click', () => {
-      confirmJoinBtn?.addEventListener(
-        'click',
-        () => joinRoomById(document.querySelector('#room-id').value),
-        { once: true }
-      );
-      roomDialog.open();
-    });
-
-    return () => {
-      cameraBtn?.removeEventListener('click', openUserMedia);
-      hangupBtn?.removeEventListener('click', hangUp);
-      createBtn?.removeEventListener('click', createRoom);
-    };
   }, []);
 
   async function openUserMedia() {
@@ -62,130 +43,149 @@ function WebRTCComponent() {
       setLoading(true);
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       setLocalStream(stream);
-      localStreamRef.current = stream; // ✅ Store in ref as well
-
-      const remoteStream = new MediaStream();
-      setRemoteStream(remoteStream);
-
+      const newRemoteStream = new MediaStream();
+      setRemoteStream(newRemoteStream);
       document.querySelector('#localVideo').srcObject = stream;
-      document.querySelector('#remoteVideo').srcObject = remoteStream;
-
-      document.querySelector('#cameraBtn').disabled = true;
-      document.querySelector('#joinBtn').disabled = false;
-      document.querySelector('#createBtn').disabled = false;
-      document.querySelector('#hangupBtn').disabled = false;
-
+      document.querySelector('#remoteVideo').srcObject = newRemoteStream;
       setLoading(false);
-    } catch (error) {
-      console.error('Error accessing media devices:', error);
-      setError('Could not access your camera or microphone. Please check your devices.');
+    } catch (err) {
+      setError('Could not access camera/microphone.');
       setLoading(false);
     }
-  }
-
-  async function hangUp() {
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-      localStreamRef.current = null;
-    }
-    if (remoteStream) {
-      remoteStream.getTracks().forEach(track => track.stop());
-    }
-
-    document.querySelector('#localVideo').srcObject = null;
-    document.querySelector('#remoteVideo').srcObject = null;
-
-    document.querySelector('#cameraBtn').disabled = false;
-    document.querySelector('#joinBtn').disabled = true;
-    document.querySelector('#createBtn').disabled = true;
-    document.querySelector('#hangupBtn').disabled = true;
-
-    setCurrentRoom('');
   }
 
   async function createRoom() {
+    setLoading(true);
     try {
-      setLoading(true);
-      const docRef = await addDoc(collection(db, 'rooms'), {
+      const pc = new RTCPeerConnection(configuration);
+      peerConnectionRef.current = pc;
+
+      localStream.getTracks().forEach(track => {
+        pc.addTrack(track, localStream);
+      });
+
+      const callerCandidatesCollection = collection(db, 'rooms');
+      const roomRef = await addDoc(callerCandidatesCollection, {
         creator: auth.currentUser ? auth.currentUser.email : 'Anonymous',
         createdAt: new Date(),
       });
-      alert('Room created! Room ID: ' + docRef.id);
-      setCurrentRoom(docRef.id);
-      setLoading(false);
-    } catch (error) {
-      console.error('Error creating room: ', error);
-      setError('Could not create the room. Please try again later.');
-      setLoading(false);
-    }
-  }
 
-  async function joinRoomById(roomId) {
-    // ✅ Use the ref instead of state
-    const localStream = localStreamRef.current;
-    if (!localStream) {
-      alert('Please enable your camera and microphone first by clicking "Start camera".');
-      return;
-    }
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
 
-    setLoading(true);
-    const roomRef = doc(db, 'rooms', roomId);
-    const roomSnapshot = await getDoc(roomRef);
-
-    if (roomSnapshot.exists()) {
-      const offer = roomSnapshot.data().offer;
-      console.log('Got offer:', offer);
-
-      const configuration = {
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      };
-
-      const peerConnection = new RTCPeerConnection(configuration);
-      registerPeerConnectionListeners();
-      localStream.getTracks().forEach(track => {
-        peerConnection.addTrack(track, localStream);
+      await updateDoc(doc(db, 'rooms', roomRef.id), {
+        offer: { type: offer.type, sdp: offer.sdp },
       });
 
-      const calleeCandidatesCollection = collection(roomRef, 'calleeCandidates');
-      peerConnection.addEventListener('icecandidate', event => {
-        if (!event.candidate) {
-          console.log('Got final candidate!');
-          return;
+      pc.addEventListener('icecandidate', event => {
+        if (event.candidate) {
+          const candidatesRef = collection(doc(db, 'rooms', roomRef.id), 'callerCandidates');
+          addDoc(candidatesRef, event.candidate.toJSON());
         }
-        console.log('Got candidate: ', event.candidate);
-        addDoc(calleeCandidatesCollection, event.candidate.toJSON());
       });
 
-      peerConnection.addEventListener('track', event => {
-        console.log('Got remote track:', event.streams[0]);
+      pc.addEventListener('track', event => {
         event.streams[0].getTracks().forEach(track => {
           remoteStream.addTrack(track);
         });
       });
 
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-
-      await roomRef.update({ answer: { type: answer.type, sdp: answer.sdp } });
-      setLoading(false);
-    } else {
-      setError('Room not found. Please check the Room ID.');
-      setLoading(false);
+      setCurrentRoom(roomRef.id);
+    } catch (err) {
+      setError('Failed to create room.');
     }
+    setLoading(false);
   }
 
-  function registerPeerConnectionListeners() {
-    // Add useful listeners here for debugging if needed
-    console.log('PeerConnection listeners registered.');
+  async function joinRoomById(roomId) {
+    if (!(localStream instanceof MediaStream) || localStream.getTracks().length === 0) {
+      alert('Camera and microphone are not active. Please click "Start camera" first.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const roomRef = doc(db, 'rooms', roomId);
+      const roomSnapshot = await getDoc(roomRef);
+
+      if (!roomSnapshot.exists()) {
+        setError('Room not found. Please check the Room ID.');
+        setLoading(false);
+        return;
+      }
+
+      const roomData = roomSnapshot.data();
+      const offer = roomData?.offer;
+
+      if (!offer) {
+        setError('Offer not found. The room might not be initialized properly.');
+        setLoading(false);
+        return;
+      }
+
+      const pc = new RTCPeerConnection(configuration);
+      peerConnectionRef.current = pc;
+
+      localStream.getTracks().forEach(track => {
+        pc.addTrack(track, localStream);
+      });
+
+      pc.addEventListener('icecandidate', event => {
+        if (event.candidate) {
+          const calleeCandidates = collection(roomRef, 'calleeCandidates');
+          addDoc(calleeCandidates, event.candidate.toJSON());
+        }
+      });
+
+      pc.addEventListener('track', event => {
+        event.streams[0].getTracks().forEach(track => {
+          remoteStream.addTrack(track);
+        });
+      });
+
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      await updateDoc(roomRef, {
+        answer: { type: answer.type, sdp: answer.sdp },
+      });
+
+      setCurrentRoom(roomId);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to join room.');
+    }
+    setLoading(false);
+  }
+
+  function hangUp() {
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+    }
+
+    if (localStream) localStream.getTracks().forEach(track => track.stop());
+    if (remoteStream) remoteStream.getTracks().forEach(track => track.stop());
+
+    document.querySelector('#localVideo').srcObject = null;
+    document.querySelector('#remoteVideo').srcObject = null;
+    setCurrentRoom('');
   }
 
   return (
     <div>
-      {loading && <div>Loading... Please wait.</div>}
+      {loading && <div>Loading...</div>}
       {error && <div style={{ color: 'red' }}>{error}</div>}
 
-      <ButtonPanel />
+      <ButtonPanel
+        onCameraClick={openUserMedia}
+        onCreateRoom={createRoom}
+        onJoinRoom={() => {
+          const roomId = prompt('Enter Room ID to join:');
+          if (roomId) joinRoomById(roomId);
+        }}
+        onHangUp={hangUp}
+      />
       <VideoPanel />
       <RoomDialog />
       <div id="currentRoom">Room: {currentRoom}</div>
