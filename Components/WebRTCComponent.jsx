@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { db, auth } from './firebase'; // Import Firebase services
 import { collection, addDoc, getDocs, doc, getDoc } from 'firebase/firestore';
-import VideoPanel from './VideoPanel'; 
+import VideoPanel from './VideoPanel';
 import RoomDialog from './RoomDialog';
 import ButtonPanel from './ButtonPanel';
 
 function WebRTCComponent() {
   const [localStream, setLocalStream] = useState(null);
-  const [remoteStream, setRemoteStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(new MediaStream());
   const [rooms, setRooms] = useState([]); // State to store available rooms
   const [currentRoom, setCurrentRoom] = useState('');
   const [loading, setLoading] = useState(false); // Loading state
@@ -35,7 +35,7 @@ function WebRTCComponent() {
     const joinBtn = document.querySelector('#joinBtn');
     const hangupBtn = document.querySelector('#hangupBtn');
     const confirmJoinBtn = document.querySelector('#confirmJoinBtn');
-    
+
     const roomDialog = new window.mdc.dialog.MDCDialog(document.querySelector('#room-dialog'));
 
     cameraBtn?.addEventListener('click', openUserMedia);
@@ -67,8 +67,10 @@ function WebRTCComponent() {
       const remoteStream = new MediaStream();
       setRemoteStream(remoteStream);
 
-      document.querySelector('#localVideo').srcObject = stream;
-      document.querySelector('#remoteVideo').srcObject = remoteStream;
+      const localVideo = document.querySelector('#localVideo');
+      const remoteVideo = document.querySelector('#remoteVideo');
+      if (localVideo) localVideo.srcObject = stream;
+      if (remoteVideo) remoteVideo.srcObject = remoteStream;
 
       document.querySelector('#cameraBtn').disabled = true;
       document.querySelector('#joinBtn').disabled = false;
@@ -86,13 +88,18 @@ function WebRTCComponent() {
   async function hangUp() {
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
+      setLocalStream(null);
     }
     if (remoteStream) {
       remoteStream.getTracks().forEach(track => track.stop());
+      setRemoteStream(new MediaStream());
     }
 
-    document.querySelector('#localVideo').srcObject = null;
-    document.querySelector('#remoteVideo').srcObject = null;
+    const localVideo = document.querySelector('#localVideo');
+    const remoteVideo = document.querySelector('#remoteVideo');
+    if (localVideo) localVideo.srcObject = null;
+    if (remoteVideo) remoteVideo.srcObject = null;
+
     document.querySelector('#cameraBtn').disabled = false;
     document.querySelector('#joinBtn').disabled = true;
     document.querySelector('#createBtn').disabled = true;
@@ -132,7 +139,7 @@ function WebRTCComponent() {
     if (roomSnapshot.exists()) {
       const offer = roomSnapshot.data().offer;
       console.log('Got offer:', offer);
-      
+
       const peerConnection = new RTCPeerConnection(configuration);
       registerPeerConnectionListeners();
       localStream.getTracks().forEach(track => {
