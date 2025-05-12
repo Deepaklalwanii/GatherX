@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { db, auth } from './firebase'; // Import Firebase services
+import React, { useEffect, useRef, useState } from 'react';
+import { db, auth } from './firebase';
 import { collection, addDoc, getDocs, doc, getDoc } from 'firebase/firestore';
 import VideoPanel from './VideoPanel';
 import RoomDialog from './RoomDialog';
@@ -7,14 +7,15 @@ import ButtonPanel from './ButtonPanel';
 
 function WebRTCComponent() {
   const [localStream, setLocalStream] = useState(null);
-  const [remoteStream, setRemoteStream] = useState(new MediaStream());
-  const [rooms, setRooms] = useState([]); // State to store available rooms
+  const [remoteStream, setRemoteStream] = useState(null);
+  const [rooms, setRooms] = useState([]);
   const [currentRoom, setCurrentRoom] = useState('');
-  const [loading, setLoading] = useState(false); // Loading state
-  const [error, setError] = useState(null); // Error state
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const localStreamRef = useRef(null); // ✅ Fix for reliable stream tracking
 
   useEffect(() => {
-    // Fetch rooms from Firestore
     const fetchRooms = async () => {
       try {
         const roomCollection = collection(db, 'rooms');
@@ -29,13 +30,12 @@ function WebRTCComponent() {
 
     fetchRooms();
 
-    // Event listeners for buttons
     const cameraBtn = document.querySelector('#cameraBtn');
     const createBtn = document.querySelector('#createBtn');
     const joinBtn = document.querySelector('#joinBtn');
     const hangupBtn = document.querySelector('#hangupBtn');
     const confirmJoinBtn = document.querySelector('#confirmJoinBtn');
-
+    
     const roomDialog = new window.mdc.dialog.MDCDialog(document.querySelector('#room-dialog'));
 
     cameraBtn?.addEventListener('click', openUserMedia);
@@ -57,25 +57,24 @@ function WebRTCComponent() {
     };
   }, []);
 
-  // Handle opening camera and microphone
   async function openUserMedia() {
     try {
       setLoading(true);
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       setLocalStream(stream);
+      localStreamRef.current = stream; // ✅ Store in ref as well
 
       const remoteStream = new MediaStream();
       setRemoteStream(remoteStream);
 
-      const localVideo = document.querySelector('#localVideo');
-      const remoteVideo = document.querySelector('#remoteVideo');
-      if (localVideo) localVideo.srcObject = stream;
-      if (remoteVideo) remoteVideo.srcObject = remoteStream;
+      document.querySelector('#localVideo').srcObject = stream;
+      document.querySelector('#remoteVideo').srcObject = remoteStream;
 
       document.querySelector('#cameraBtn').disabled = true;
       document.querySelector('#joinBtn').disabled = false;
       document.querySelector('#createBtn').disabled = false;
       document.querySelector('#hangupBtn').disabled = false;
+
       setLoading(false);
     } catch (error) {
       console.error('Error accessing media devices:', error);
@@ -84,30 +83,26 @@ function WebRTCComponent() {
     }
   }
 
-  // Handle hanging up (stopping streams)
   async function hangUp() {
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
-      setLocalStream(null);
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
     }
     if (remoteStream) {
       remoteStream.getTracks().forEach(track => track.stop());
-      setRemoteStream(new MediaStream());
     }
 
-    const localVideo = document.querySelector('#localVideo');
-    const remoteVideo = document.querySelector('#remoteVideo');
-    if (localVideo) localVideo.srcObject = null;
-    if (remoteVideo) remoteVideo.srcObject = null;
+    document.querySelector('#localVideo').srcObject = null;
+    document.querySelector('#remoteVideo').srcObject = null;
 
     document.querySelector('#cameraBtn').disabled = false;
     document.querySelector('#joinBtn').disabled = true;
     document.querySelector('#createBtn').disabled = true;
     document.querySelector('#hangupBtn').disabled = true;
+
     setCurrentRoom('');
   }
 
-  // Create a new room (store in Firestore)
   async function createRoom() {
     try {
       setLoading(true);
@@ -125,8 +120,9 @@ function WebRTCComponent() {
     }
   }
 
-  // Join an existing room
   async function joinRoomById(roomId) {
+    // ✅ Use the ref instead of state
+    const localStream = localStreamRef.current;
     if (!localStream) {
       alert('Please enable your camera and microphone first by clicking "Start camera".');
       return;
@@ -140,24 +136,26 @@ function WebRTCComponent() {
       const offer = roomSnapshot.data().offer;
       console.log('Got offer:', offer);
 
+      const configuration = {
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      };
+
       const peerConnection = new RTCPeerConnection(configuration);
       registerPeerConnectionListeners();
       localStream.getTracks().forEach(track => {
         peerConnection.addTrack(track, localStream);
       });
 
-      // Collect ICE candidates
-      const calleeCandidatesCollection = roomRef.collection('calleeCandidates');
+      const calleeCandidatesCollection = collection(roomRef, 'calleeCandidates');
       peerConnection.addEventListener('icecandidate', event => {
         if (!event.candidate) {
           console.log('Got final candidate!');
           return;
         }
         console.log('Got candidate: ', event.candidate);
-        calleeCandidatesCollection.add(event.candidate.toJSON());
+        addDoc(calleeCandidatesCollection, event.candidate.toJSON());
       });
 
-      // Handle remote track
       peerConnection.addEventListener('track', event => {
         console.log('Got remote track:', event.streams[0]);
         event.streams[0].getTracks().forEach(track => {
@@ -175,6 +173,11 @@ function WebRTCComponent() {
       setError('Room not found. Please check the Room ID.');
       setLoading(false);
     }
+  }
+
+  function registerPeerConnectionListeners() {
+    // Add useful listeners here for debugging if needed
+    console.log('PeerConnection listeners registered.');
   }
 
   return (
